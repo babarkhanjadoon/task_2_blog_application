@@ -2,8 +2,6 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
-from fastapi import HTTPException, status
-from jwt import decode_jwt_token
 
 
 def get_user(db: Session, user_id: int):

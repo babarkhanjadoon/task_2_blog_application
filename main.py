@@ -1,8 +1,10 @@
-from typing import Dict, List
+from typing import Dict, List, Annotated
 import schemas
 import models
 from user_queries import get_user_by_email, get_user
 from database import Base, engine, SessionLocal
+from fastapi.security import OAuth2PasswordBearer
+
 from fastapi import FastAPI, Depends, HTTPException, status, Response, Body
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
@@ -17,6 +19,8 @@ from utils import (
     get_hashed_password,
     verify_password
 )
+
+from jose import JWTError
 
 load_dotenv()
 Base.metadata.create_all(engine)
@@ -34,49 +38,25 @@ def get_session():
 
 app = FastAPI()
 
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 
-class JWTBearer(HTTPBearer):
-    def __init__(self, auto_error: bool = True):
-        super(JWTBearer, self).__init__(auto_error=auto_error)
-
-    def __call__(self, request):
-        credentials: HTTPAuthorizationCredentials = super(JWTBearer, self).__call__(request)
-        if credentials:
-            if not credentials.scheme == "Bearer":
-                raise HTTPException(status_code=403, detail="Invalid authentication scheme.")
-
-            if not self.verify_jwt(credentials.credentials):
-                raise HTTPException(status_code=403, detail="Invalid token or expired token.")
-            return credentials.credentials
-        else:
-            raise HTTPException(status_code=403, detail="Invalid authorization code.")
-
-    def verify_jwt(self, jwtoken: str) -> bool:
-        return decode_jwt_token(token=jwtoken)
-
-
-def get_user_by_token(token=Depends(JWTBearer), db: Session = Depends(get_session)):
+def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], db: Session = Depends(get_session)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        import ipdb;
-        ipdb.set_trace()
         payload = decode_jwt_token(token)
-        user_id: str = payload.get("sub")
-        if not user_id:
+        user_id = payload.get("sub")
+        if user_id is None:
             raise credentials_exception
-    except HTTPException:
+    except JWTError:
         raise credentials_exception
-
     user = get_user(db, user_id)
     if user is None:
         raise credentials_exception
-
     return user
 
 
@@ -137,7 +117,7 @@ def login(
 
 @app.post("/blogs/", response_model=schemas.Blog)
 def create_blog(blog: schemas.BlogCreate, db: Session = Depends(get_session),
-                current_user: schemas.User = Depends(get_user_by_token)):
+                current_user: schemas.User = Depends(get_current_user)):
     return blog_queries.create_blog(db, blog, current_user.id)
 
 
@@ -150,7 +130,6 @@ def read_blogs(skip: int = 0, limit: int = 10, db: Session = Depends(get_session
 @app.post("/blogs/{blog_id}/comments/", response_model=schemas.Comment)
 def create_comment(
         blog_id: int, comment: schemas.CommentCreate, session: Session = Depends(get_session),
-        current_user: schemas.User = Depends(get_user_by_token)
+        current_user: schemas.User = Depends(get_current_user)
 ):
-
     return blog_queries.create_comment(session, comment, blog_id, current_user.id)
